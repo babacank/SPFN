@@ -1,0 +1,59 @@
+# GPUs
+CUDA_visible_GPUs:
+    - "0"
+
+test: true
+test_pc_in: "tmp.xyz"
+test_h5_out: "tmp.h5"
+
+
+# name and mode
+nn_name: "DPPN"
+debug_mode: false
+
+# model parameters
+use_direct_regression: true
+batch_size: 16
+miou_loss_multiplier: 1.0
+normal_loss_multiplier: 1.0
+type_loss_multiplier: 1.0
+parameter_loss_multiplier: 1.0
+residue_loss_multiplier: 1.0
+total_loss_multiplier: 1.0
+list_of_primitives:
+
+    - 'plane'
+
+
+
+n_max_instances: 24
+
+# data source
+train_data_file: "../plane_data/train_models_w.csv"
+train_first_n: -1
+train_data_noisy: true
+val_data_file: "../traceparts_data/test_models.csv"
+val_first_n: -1
+val_data_noisy: true
+test_data_file: "../traceparts_data/test_models.csv"
+test_first_n: -1
+test_data_noisy: true
+
+# training parameters
+n_epochs: 100
+orthogonality_loss_weight: 0.1
+bn_decay_step: 200000
+decay_step: 200000
+decay_rate: 0.7
+init_learning_rate: 0.001
+val_interval: 2000
+snapshot_interval: 500
+
+# I/O
+in_model_dir: "planar/results2/model"
+out_model_dir: "planar/results2/model"
+val_prediction_dir: "planar/results2/val_pred"
+val_prediction_n_keep: 2
+test_prediction_dir: "planar/results2/test_pred"
+log_dir: "planar/results2/log"
+writer_start_step: 1000
