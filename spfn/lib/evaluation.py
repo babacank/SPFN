@@ -34,13 +34,14 @@ def create_gt_dict(n_max_instances):
 
 def fill_gt_dict_with_batch_data(feed_dict, gt_dict, batch):
     feed_dict.update({
-        gt_dict['points_per_instance']: batch['P_gt'], 
-        gt_dict['normal_per_point']: batch['normal_gt'],
-        gt_dict['instance_per_point']: batch['I_gt'], 
-        gt_dict['type_per_instance']: batch['T_gt'], 
+        gt_dict['points_per_instance']: batch['P'],
+        #gt_dict['points_per_instance']: batch['P_gt'],
+        # gt_dict['normal_per_point']: batch['normal_gt'],
+        # gt_dict['instance_per_point']: batch['I_gt'],
+        # gt_dict['type_per_instance']: batch['T_gt'],
     })
-    for fitter_cls in fitter_factory.get_all_fitter_classes():
-        fitter_cls.fill_gt_placeholders(feed_dict, gt_dict['parameters'], batch)
+    # for fitter_cls in fitter_factory.get_all_fitter_classes():
+    #     fitter_cls.fill_gt_placeholders(feed_dict, gt_dict['parameters'], batch)
 
 def nn_filter_W(W, W_null_threshold=0.005):
     # for SPFN & DPPN output, we do two postprocessings: 1) nullify columns with too few points 2) make entries of W binary
@@ -102,11 +103,11 @@ def evaluate(pred_dict, gt_dict, is_eval, is_nn, P_in=None):
 
     matching_indices = tf.stop_gradient(tf.py_func(hungarian_matching, [W, I_gt], Tout=tf.int32)) # BxK
     miou_loss = compute_miou_loss(W, I_gt, matching_indices) # losses all have dimension BxK
-    normal_loss = compute_normal_loss(pred_dict['normal_per_point'], gt_dict['normal_per_point'], angle_diff=is_eval) # B
-    per_point_type_loss = compute_per_point_type_loss(pred_dict['type_per_point'], I_gt, T_gt, is_eval=is_eval) # B
+    #normal_loss = compute_normal_loss(pred_dict['normal_per_point'], gt_dict['normal_per_point'], angle_diff=is_eval) # B
+    #per_point_type_loss = compute_per_point_type_loss(pred_dict['type_per_point'], I_gt, T_gt, is_eval=is_eval) # B
 
     residue_losses = [] # a length T array of BxK tensors
-    parameter_losses = [] # a length T array of BxK tensors
+    #parameter_losses = [] # a length T array of BxK tensors
     residue_per_point_array = [] # a length T array of BxKxN' tensors
     for fitter_cls in fitter_factory.get_all_fitter_classes():
         residue_per_point = fitter_cls.compute_residue_loss(pred_dict['parameters'], gt_dict['points_per_instance'], matching_indices) # BxKxN'
@@ -140,6 +141,106 @@ def evaluate(pred_dict, gt_dict, is_eval, is_nn, P_in=None):
     if is_eval:
         result.update(
             calculate_eval_stats( 
+                W=W,
+                matching_indices=matching_indices,
+                mask_gt=mask_gt,
+                P_in=P_in,
+                type_per_point=pred_dict['type_per_point'],
+                T_gt=T_gt,
+                parameters=pred_dict['parameters'],
+                residue_losses=residue_losses,
+                parameter_loss=parameter_loss,
+                residue_per_point_array=residue_per_point_array,
+            )
+        )
+
+    return result
+
+def evaluate_plane_only(pred_dict, gt_dict, is_eval, is_nn, P_in=None):
+    '''
+        Input:
+            pred_dict should contain:
+                - W: BxNxK, segmentation instances. Allow zero rows to indicate unassigned points.
+                - normal_per_point: BxNx3, normal per point
+                - type_per_point: type per points
+                    - This should be logit of shape BxNxT if is_eval=False, and actual value of shape BxN otherwise
+                    - can contain -1
+                - parameters - a dict, each entry is a BxKx... tensor
+            gt_dict should be obtained from calling create_gt_dict
+            P_in - BxNx3 is the input point cloud, used only when is_eval=True
+
+        Returns: {loss_dict, matching_indices} + stats from calculate_eval_stats(), where
+            - loss_dict contains:
+                - normal_loss: B, averaged over all N points
+                - type_loss: B, averaged over all N points.
+                    - This is cross entropy loss during training, and accuracy during test time
+                - miou_loss: BxK, mean IoU loss for each matched instances
+                - residue_loss: BxK, residue loss for each instance
+                - parameter_loss: BxK, parameter loss for each instance
+                - avg_miou_loss: B
+                - avg_residue_loss: B
+                - avg_parameter_loss: B
+            - matching_indices: BxK, where (b,k)th ground truth primitive is matched with (b, matching_indices[b, k])
+    '''
+    # dimension tensors
+    W = pred_dict['W']
+    batch_size = tf.shape(W)[0]
+    n_points = tf.shape(W)[1]
+    n_max_instances = W.get_shape()[2] # n_max_instances should not be dynamic
+    n_registered_primitives = fitter_factory.get_n_registered_primitives()
+
+    if is_eval and is_nn:
+        # at evaluation, want W to be binary and filtered (if is from nn)
+        W = nn_filter_W(W)
+
+    # shortcuts
+    # note that I_gt can contain -1, indicating instance of unknown primitive type
+    I_gt = gt_dict['instance_per_point'] # BxN
+    T_gt = gt_dict['type_per_instance'] # BxK
+
+    n_instances_gt = tf.reduce_max(I_gt, axis=1) + 1 # only count known primitive type instances, as -1 will be ignored
+    mask_gt = tf.sequence_mask(n_instances_gt, maxlen=n_max_instances) # BxK, mask_gt[b, k] = 1 iff instace k is present in the ground truth batch b
+
+    matching_indices = tf.stop_gradient(tf.py_func(hungarian_matching, [W, I_gt], Tout=tf.int32)) # BxK
+    miou_loss = compute_miou_loss(W, I_gt, matching_indices) # losses all have dimension BxK
+    normal_loss = compute_normal_loss(pred_dict['normal_per_point'], gt_dict['normal_per_point'], angle_diff=is_eval) # B
+    per_point_type_loss = compute_per_point_type_loss(pred_dict['type_per_point'], I_gt, T_gt, is_eval=is_eval) # B
+
+    residue_losses = [] # a length T array of BxK tensors
+    parameter_losses = [] # a length T array of BxK tensors
+    residue_per_point_array = [] # a length T array of BxKxN' tensors
+    for fitter_cls in fitter_factory.get_all_fitter_classes():
+        residue_per_point = fitter_cls.compute_residue_loss_pairwise(pred_dict['parameters'], P_in) # BxKxN'
+        residue_per_point_array.append(residue_per_point)
+        residue_losses.append(tf.reduce_mean(residue_per_point, axis=2))
+        parameter_loss = fitter_cls.compute_parameter_loss(pred_dict['parameters'], gt_dict['parameters'], matching_indices, angle_diff=is_eval)
+        if parameter_loss is None:
+            parameter_loss = tf.zeros(dtype=tf.float32, shape=[batch_size, n_max_instances])
+        parameter_losses.append(parameter_loss)
+    residue_losses = tf.stack(residue_losses, axis=2)
+    parameter_losses = tf.stack(parameter_losses, axis=2)
+    residue_per_point_array = tf.stack(residue_per_point_array, axis=3) # BxKxN'xT
+
+    # Aggregate losses across fitters
+    residue_loss = aggregate_loss_from_stacked(residue_losses, T_gt) # BxK
+    parameter_loss = aggregate_loss_from_stacked(parameter_losses, T_gt) # BxK
+
+    loss_dict = {
+        'normal_loss': normal_loss,
+        'type_loss': per_point_type_loss,
+        'miou_loss': miou_loss,
+        'residue_loss': residue_loss,
+        'parameter_loss': parameter_loss,
+        'avg_miou_loss': reduce_mean_masked_instance(miou_loss, mask_gt),
+        #'avg_residue_loss': reduce_mean_masked_instance(residue_loss, mask_gt),
+        #'avg_parameter_loss': reduce_mean_masked_instance(parameter_loss, mask_gt),
+    }
+
+    result = {'loss_dict': loss_dict, 'matching_indices': matching_indices}
+
+    if is_eval:
+        result.update(
+            calculate_eval_stats(
                 W=W,
                 matching_indices=matching_indices,
                 mask_gt=mask_gt,

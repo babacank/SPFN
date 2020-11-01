@@ -11,6 +11,25 @@ import tensorflow as tf
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+
+def get_where_inliers_at_memberships (T,W):
+
+    n_n = W.get_shape()[2] # n_max_instances should not be dynamic
+    #T_W_mask = tf.equal(tf.argmax(T, axis=2), tf.argmax(W, axis=2))
+    T_W_mask = tf.equal(tf.one_hot(tf.argmax(T, axis=2),depth = n_n, dtype=tf.float32),tf.one_hot(tf.argmax(W, axis=2),depth = n_n, dtype=tf.float32))
+    #T_mask = tf.where(T_W_mask,tf.one_hot(tf.argmax(T, axis=2),depth = n_n, dtype=tf.float32), tf.zeros_like(T))
+    T_mask = tf.where(T_W_mask, T, tf.zeros_like(T))
+    return T_mask
+
+def get_where_inliers_at_memberships_onehot (T,W):
+
+    n_max_instances = W.get_shape()[2] # n_max_instances should not be dynamic
+    T_W_mask = tf.equal(tf.one_hot(tf.argmax(T, axis=2),depth = n_max_instances, dtype=tf.float32),tf.one_hot(tf.argmax(W, axis=2),depth = n_max_instances, dtype=tf.float32))
+    T_mask = tf.where(T_W_mask,tf.one_hot(tf.argmax(T, axis=2),depth = n_max_instances, dtype=tf.float32),tf.zeros_like(T) )
+    T_mask = tf.where(T_W_mask, T,
+                      tf.zeros_like(T))
+    return T_mask
+
 def get_per_point_model(scope, P, n_max_instances, is_training, bn_decay):
     ''' 
         Inputs:
@@ -47,7 +66,7 @@ def get_per_point_model(scope, P, n_max_instances, is_training, bn_decay):
     }
 
 
-def get_direct_loss_model(scope, P, n_max_instances, is_training, bn_decay):
+def get_calculate_plane_loss_model(scope, P, n_max_instances, is_training, bn_decay):
     '''
         Inputs:
             - P: BxNx3 tensor, the input point cloud
@@ -59,7 +78,7 @@ def get_direct_loss_model(scope, P, n_max_instances, is_training, bn_decay):
             - parameters - a dict, each entry is a BxKx... tensor
     '''
 
-    n_registered_primitives = fitter_factory.get_n_registered_primitives()
+    n_registered_primitives = 1 #plane only
     with tf.variable_scope(scope):
         net_results = build_pointnet2_seg('est_net', X=P, out_dims=[n_max_instances, 3, n_registered_primitives],
                                           is_training=is_training, bn_decay=bn_decay)
@@ -73,15 +92,123 @@ def get_direct_loss_model(scope, P, n_max_instances, is_training, bn_decay):
         'normal_per_point': normal_per_point,
     }
     parameters = {}
+
     for fitter_cls in fitter_factory.get_all_fitter_classes():
         fitter_cls.compute_parameters(fitter_feed, parameters)
+
+    residue_losses = []
+    for fitter_cls in fitter_factory.get_all_fitter_classes():
+        residue_per_point = fitter_cls.compute_residue_loss_no_gt(parameters,
+                                                                     P)  # BxKxKxN'
+        # residue_per_point = fitter_cls.compute_residue_loss_pairwise(parameters, gt_dict['points_per_instance']) # BxKxKxN'
+        residue_avg = tf.reduce_mean(residue_per_point, axis=3)  # BxKxK
+        # residue_avg[b, k1, k2] is roughly the distance between gt instance k1 and predicted instance k2
+        residue_losses.append(residue_avg)
+        residue_loss_no_gt = tf.reduce_sum(residue_losses)
+
 
     return {
         'W': W,
         'normal_per_point': normal_per_point,
         'type_per_point': type_per_point,
         'parameters': parameters,
+    }, residue_loss_no_gt
+
+def get_direct_plane_loss_model(scope, P, n_max_instances, is_training, bn_decay):
+    '''
+        Inputs:
+            - P: BxNx3 tensor, the input point cloud
+            - K := n_max_instances
+        Outputs: a dict, containing
+            - W: BxNxK, segmentation instances, fractional
+            - normal_per_point: BxNx3, normal per point
+            - type_per_point: BxNxT, type per points. NOTE: this is before taking softmax!
+            - parameters - a dict, each entry is a BxKx... tensor
+    '''
+
+    n_registered_primitives = 2 #inlier-outlier
+    with tf.variable_scope(scope):
+        net_results = build_pointnet2_seg('est_net', X=P, out_dims=[n_max_instances, 2, n_max_instances],#n_registered_primitives,
+                                          is_training=is_training, bn_decay=bn_decay)
+        W, normal_per_point, type_per_point = net_results
+    W = tf.nn.softmax(W, axis=2)  # BxNxK
+    T = tf.nn.softmax(type_per_point, axis=2) #BN2
+    #T  = tf.nn.dropout(T, 0.9)
+    #T = tf.nn.l2_normalize(type_per_point, axis=2)  # BxNx3
+    #T_outlier = tf.slice(T,[0,0,0],[-1,-1,1])  #outliers are label-zero
+    #T_outlier = T
+    normal_per_point = tf.nn.l2_normalize(normal_per_point, axis=2)  # BxNx3
+
+    T_mask= get_where_inliers_at_memberships (T,W)
+
+    T_max = tf.reduce_max(
+    T_mask,
+    axis=1,
+    keepdims=True,
+    name=None
+)
+    T_reverted = tf.ones_like(T_max) - T_max
+    T_outlier = T_reverted
+    T = T_mask
+    fitter_feed = {
+        'P': P,
+        'W': W,
+        'T': T,
+        'normal_per_point': normal_per_point,
     }
+    parameters = {}
+    residue_losses = []
+    outlier_losses = []
+    loss_n_losses = []
+
+    # for fitter_cls in fitter_factory.get_all_fitter_classes():
+    #     residue_per_instance = fitter_cls.compute_parameters_plane_loss(fitter_feed, parameters)
+    #     residue_losses.append(residue_per_instance)
+    #     residue_loss_no_gt = tf.reduce_sum(residue_losses)
+    for fitter_cls in fitter_factory.get_all_fitter_classes():
+        residue_per_point, loss_n = fitter_cls.compute_parameters_plane_loss_with_T(fitter_feed, parameters)
+        #fitter_cls.compute_parameters_plane_loss_with_T(fitter_feed, parameters)
+
+        #residue_per_point=[[1,1]]
+        residue_avg = tf.reduce_mean(residue_per_point, axis=1)
+        #residue_avg = residue_per_point
+
+        residue_losses.append(residue_avg)
+        #residue_losses.append(residue_per_point)
+        residue_loss_no_gt = tf.reduce_sum(residue_losses)
+
+
+        loss_n_avg = tf.reduce_mean(loss_n, axis=0)
+        loss_n_losses.append(loss_n_avg)
+        #loss_n_losses.append(loss_n)
+        loss_n_loss_no_gt = tf.reduce_sum(loss_n_losses)
+
+
+
+    for fitter_cls in fitter_factory.get_all_fitter_classes():
+        outlier_avg = tf.reduce_mean(T_outlier, axis=2)
+        outlier_losses.append(outlier_avg)
+        outlier_loss_no_gt = tf.reduce_sum(outlier_losses)
+
+    # residue_losses = []
+    # for fitter_cls in fitter_factory.get_all_fitter_classes():
+    #     residue_per_point = fitter_cls.compute_residue_loss_no_gt(parameters,
+    #                                                                  P)  # BxKxKxN'
+    #     # residue_per_point = fitter_cls.compute_residue_loss_pairwise(parameters, gt_dict['points_per_instance']) # BxKxKxN'
+    #     residue_avg = tf.reduce_mean(residue_per_point, axis=3)  # BxKxK
+    #     # residue_avg[b, k1, k2] is roughly the distance between gt instance k1 and predicted instance k2
+    #     residue_losses.append(residue_avg)
+    #     residue_loss_no_gt = tf.reduce_sum(residue_losses)
+
+
+    return {
+        'W': W,
+        'normal_per_point': normal_per_point,
+        'type_per_point': T,
+        'parameters': parameters,
+    }, residue_loss_no_gt, outlier_loss_no_gt, loss_n_loss_no_gt
+
+
 
 def get_direct_regression_model(scope, P, n_max_instances, gt_dict, is_training, bn_decay):
     ''' 

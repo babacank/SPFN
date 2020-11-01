@@ -1,0 +1,1 @@
+Total Loss: 0.645488, MIoU Loss: 0.413618, Normal Loss: 0.058800, Type Loss: 0.131757, Parameter Loss: 0.032821, Residue Loss: 0.008491

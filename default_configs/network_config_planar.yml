@@ -50,10 +50,10 @@ val_interval: 2000
 snapshot_interval: 500
 
 # I/O
-in_model_dir: "planar/results2/model"
-out_model_dir: "planar/results2/model"
-val_prediction_dir: "planar/results2/val_pred"
+in_model_dir: "planar/results26/model"
+out_model_dir: "planar/results26/model"
+val_prediction_dir: "planar/results26/val_pred"
 val_prediction_n_keep: 2
-test_prediction_dir: "planar/results2/test_pred"
-log_dir: "planar/results2/log"
+test_prediction_dir: "planar/results26/test_pred"
+log_dir: "planar/results26/log"
 writer_start_step: 1000

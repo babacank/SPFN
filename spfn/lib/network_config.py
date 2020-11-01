@@ -24,6 +24,9 @@ class NetworkConfig(object):
     def get_type_loss_multiplier(self):
         return self.fetch('type_loss_multiplier')
 
+    def get_loss_n_loss_multiplier(self):
+        return self.fetch('loss_n_loss_multiplier')
+
     def get_residue_loss_multiplier(self):
         return self.fetch('residue_loss_multiplier')
 
@@ -116,3 +119,6 @@ class NetworkConfig(object):
 
     def use_direct_regression(self):
         return self.fetch('use_direct_regression')
+
+    def use_per_point(self):
+        return self.fetch('use_per_point')

@@ -3,52 +3,56 @@ CUDA_visible_GPUs:
     - "0"
 
 # name and mode
-nn_name: "SPFN"
+nn_name: "DPLM"
 debug_mode: false
 
 # model parameters
 use_direct_regression: false
+use_per_point: false
 batch_size: 16
 miou_loss_multiplier: 1.0
 normal_loss_multiplier: 1.0
-type_loss_multiplier: 1.0
+type_loss_multiplier: 0.0
+loss_n_loss_multiplier: 0
 parameter_loss_multiplier: 1.0
-residue_loss_multiplier: 1.0
+residue_loss_multiplier: 0.0
 total_loss_multiplier: 1.0
 list_of_primitives:
-    - 'sphere'
+    #- 'sphere'
     - 'plane'
-    - 'cylinder'
-    - 'cone'
+    #- 'cylinder'
+    #- 'cone'
 
-n_max_instances: 24
+n_max_instances: 4
 
 # data source
-train_data_file: "../traceparts_data/train_models.csv"
+#train_data_file: "../plane_data/train_models_w.csv"
+train_data_file: "../data/stanford_merged/toy_indoor3d_ins_seg_hdf5files0/filelist.csv"
 train_first_n: -1
-train_data_noisy: true
-val_data_file: "../traceparts_data/test_models.csv"
+train_data_noisy: false
+val_data_file: "../data/stanford_merged/toy_indoor3d_ins_seg_hdf5files0/filelist.csv"
 val_first_n: -1
-val_data_noisy: true
-test_data_file: "../traceparts_data/test_models.csv"
+val_data_noisy: false
+test_data_file: "../data/stanford_merged/toy_indoor3d_ins_seg_hdf5files0/filelist.csv"
+#test_data_file: "../traceparts_data/test_models.csv"
 test_first_n: -1
 test_data_noisy: true
 
 # training parameters
-n_epochs: 100
-orthogonality_loss_weight: 0.1
+n_epochs: 100000
+#orthogonality_loss_weight: 0.1
 bn_decay_step: 200000
 decay_step: 200000
-decay_rate: 0.7
+decay_rate: 0.99
 init_learning_rate: 0.001
-val_interval: 2000
-snapshot_interval: 500
+val_interval: 100
+snapshot_interval: 10000
 
 # I/O
-in_model_dir: "results/model"
-out_model_dir: "results/model"
-val_prediction_dir: "results/val_pred"
-val_prediction_n_keep: 2
-test_prediction_dir: "results/test_pred"
-log_dir: "results/log"
-writer_start_step: 1000
+in_model_dir: "data/results69/model"
+out_model_dir: "data/results69/model"
+val_prediction_dir: "data/results69/val_pred"
+val_prediction_n_keep: 3
+test_prediction_dir: "data/results69/test_pred"
+log_dir: "data/results69/log"
+writer_start_step: 100

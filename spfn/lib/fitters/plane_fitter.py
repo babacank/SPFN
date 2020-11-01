@@ -5,7 +5,7 @@ sys.path.append(os.path.join(BASE_DIR, '..', '..'))
 sys.path.append(os.path.join(BASE_DIR, '..', '..', '..'))
 
 from utils.tf_wrapper import batched_gather
-from utils.geometry_utils import weighted_plane_fitting
+from utils.geometry_utils import weighted_consistent_plane_fitting_with_loss_with_T
 from utils.tf_numerical_safe import acos_safe
 from fitters.adaptors import *
 from primitives import Plane
@@ -46,6 +46,48 @@ class PlaneFitter:
         parameters['plane_n'] = tf.reshape(n, [batch_size, n_max_instances, 3]) # BxKx3
         parameters['plane_c'] = tf.reshape(c, [batch_size, n_max_instances]) # BxK
 
+    def compute_parameters_plane_loss(feed_dict, parameters):
+        P = feed_dict['P']
+        W = feed_dict['W']
+        #T = feed_dict['T']
+        #T_inlier = tf.slice(T, [0, 0, 1], [-1, -1, -1])
+        batch_size = tf.shape(P)[0]
+        n_points = tf.shape(P)[1]
+        n_max_instances = tf.shape(W)[2]
+        W_reshaped = tf.reshape(tf.transpose(W, [0, 2, 1]), [batch_size * n_max_instances, n_points]) # BKxN
+        #T_inlier_reshaped = tf.reshape(tf.transpose(tf.tile(T_inlier, [1,1,n_max_instances]), [0, 2, 1]), [batch_size * n_max_instances, n_points])  # BKxN
+        P_tiled = tf.reshape(tf.tile(tf.expand_dims(P, axis=1), [1, n_max_instances, 1, 1]), [batch_size * n_max_instances, n_points, 3]) # BKxNx3, important there to match indices in W_reshaped!!!
+        n, c, loss = weighted_plane_fitting_with_loss(P_tiled, W_reshaped) # BKx3
+        #plane_loss = PlaneFitter.compute_residue_single(n, c, P_tiled)
+        parameters['plane_n'] = tf.reshape(n, [batch_size, n_max_instances, 3]) # BxKx3
+        parameters['plane_c'] = tf.reshape(c, [batch_size, n_max_instances]) # BxK
+        #plane_loss['plane_loss'] = tf.reshape(plane_loss, [batch_size, n_max_instances]) # BxK
+        return loss
+
+    def compute_parameters_plane_loss_with_T(feed_dict, parameters):
+        P = feed_dict['P']
+        W = feed_dict['W']
+        T = feed_dict['T']
+        #T_inlier = tf.slice(T, [0, 0, 1], [-1, -1, 1]) #inliers are label-one
+        T_inlier = T
+        batch_size = tf.shape(P)[0]
+        n_points = tf.shape(P)[1]
+        n_max_instances = tf.shape(W)[2]
+        W_reshaped = tf.reshape(tf.transpose(W, [0, 2, 1]), [batch_size * n_max_instances, n_points]) # BKxN
+        #T_inlier_reshaped = tf.reshape(tf.transpose(tf.tile(T_inlier, [1, 1, n_max_instances]), [0, 2, 1]), [batch_size * n_max_instances, n_points])  # BKxN
+        T_inlier_reshaped = tf.reshape(tf.transpose(T_inlier, [0, 2, 1]), [batch_size * n_max_instances, n_points])  # BKxN
+        P_tiled = tf.reshape(tf.tile(tf.expand_dims(P, axis=1), [1, n_max_instances, 1, 1]), [batch_size * n_max_instances, n_points, 3]) # BKxNx3, important there to match indices in W_reshaped!!!
+        n, c, loss_n, WP = weighted_consistent_plane_fitting_with_loss_with_T(P_tiled, W_reshaped, T_inlier_reshaped) # BKx3
+        #plane_loss = PlaneFitter.compute_residue_single(n, c, P_tiled)
+        parameters['plane_n'] = tf.reshape(n, [batch_size, n_max_instances, 2]) # BxKx3
+        parameters['plane_c'] = tf.reshape(c, [batch_size, n_max_instances]) # BxK
+
+        #for fitter_cls in fitter_factory.get_all_fitter_classes():
+        loss = PlaneFitter.compute_residue_loss_no_gt(parameters, WP)#[:,0:1])
+        #regloss_W = tf.nn.reduce_std(W)
+        #plane_loss['plane_loss'] = tf.reshape(plane_loss, [batch_size, n_max_instances]) # BxK
+        return loss, loss_n  #regloss_W
+
     def compute_residue_loss(parameters, P_gt, matching_indices):
         return PlaneFitter.compute_residue_single(
             *adaptor_matching([parameters['plane_n'], parameters['plane_c']], matching_indices), 
@@ -58,6 +100,17 @@ class PlaneFitter:
             adaptor_P_gt_pairwise(P_gt)
         )
 
+    def compute_residue_loss_no_gt(parameters, P):
+        return PlaneFitter.compute_residue_single(
+            *adaptor_pairwise([parameters['plane_n'], parameters['plane_c']]),
+            adaptor_P_pairwise(P)
+        )
+
+    def compute_residue_loss_no_gt_three(parameters, P):
+        return PlaneFitter.compute_residue_single(
+            *adaptor_pairwise_three([parameters['plane_n'], parameters['plane_c']]),
+            P
+        )
     def compute_residue_single(n, c, p):
         # n: ...x3, c: ..., p: ...x3
         return tf.square(tf.reduce_sum(p * n, axis=-1) - c)

@@ -43,7 +43,7 @@ def build_pointnet2_seg(scope, X, out_dims, is_training, bn_decay):
         net = tf_util.conv1d(l0_points, 128, 1, padding='VALID', bn=True,
                 is_training=is_training, scope='fc1', bn_decay=bn_decay)
 
-        net = tf_util.dropout(net, keep_prob=0.5, is_training=is_training,
+        net = tf_util.dropout(net, keep_prob=0.99, is_training=is_training,
                 scope='dp1')
 
         results = []
@@ -69,9 +69,9 @@ def build_pointnet2_cls(scope, point_cloud, out_dims, is_training, bn_decay):
         # Fully connected layers
         net = tf.reshape(l3_points, [batch_size, 1024])
         net = tf_util.fully_connected(net, 512, bn=True, is_training=is_training, scope='fc1', bn_decay=bn_decay)
-        net = tf_util.dropout(net, keep_prob=0.5, is_training=is_training, scope='dp1')
+        net = tf_util.dropout(net, keep_prob=0.99, is_training=is_training, scope='dp1')
         net = tf_util.fully_connected(net, 256, bn=True, is_training=is_training, scope='fc2', bn_decay=bn_decay)
-        net = tf_util.dropout(net, keep_prob=0.5, is_training=is_training, scope='dp2')
+        net = tf_util.dropout(net, keep_prob=0.99, is_training=is_training, scope='dp2')
 
         results = []
         for idx, out_dim in enumerate(out_dims):

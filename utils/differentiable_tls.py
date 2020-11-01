@@ -7,8 +7,8 @@ def custom_svd_v_column(M, col_index=-1):
     assert_op = tf.Assert(tf.logical_not(tf.reduce_any(tf.logical_not(tf.is_finite(M)))), [M], summarize=10)
     with tf.control_dependencies([assert_op]):
         with tf.get_default_graph().gradient_override_map({'Svd': 'CustomSvd'}):
-            s, u, v = tf.svd(M, name='Svd') # M = usv^T
-            return v[:, :, col_index] 
+            s, u, v = tf.svd(M, full_matrices=True, name='Svd') # M = usv^T
+            return v[:, :, col_index]
         
 def register_custom_svd_gradient():
     tf.RegisterGradient('CustomSvd')(custom_gradient_svd)
@@ -20,16 +20,17 @@ def custom_gradient_svd(op, grad_s, grad_u, grad_v):
     # v - BxPxP
 
     v_t = tf.transpose(v, [0, 2, 1])
-
+    #v_t = v
     K = compute_svd_K(s)
 
-    inner = tf.transpose(K, [0, 2, 1]) * tf.matmul(v_t, grad_v)
+    inner = tf.transpose(K, [0, 2, 1]) * tf.matmul(v_t, grad_v) #v_t
     inner = (inner + tf.transpose(inner, [0, 2, 1])) / 2
 
     # ignoring gradient coming from grad_s and grad_u for our purpose
-    res = tf.matmul(u, tf.matmul(2 * tf.matmul(tf.matrix_diag(s), inner), v_t))
-
-    return res
+    res1 = tf.matmul(u, tf.matmul(2 * tf.matmul(tf.matrix_diag(s), inner), v_t))
+    res2 = tf.matmul(u, tf.matmul(tf.matrix_diag(grad_s), v_t))
+    res = res1 + res2
+    return res1
 
 def compute_svd_K(s):
     # s should be BxP
@@ -37,7 +38,6 @@ def compute_svd_K(s):
     # res will be BxPxP
     s = tf.square(s)
     res = tf.expand_dims(s, 2) - tf.expand_dims(s, 1)
-
     # making absolute value in res is at least 1e-10
     res = guard_one_over_matrix(res)
 
@@ -63,3 +63,14 @@ def solve_weighted_tls(A, W):
     x = custom_svd_v_column(M) # Bx3
     return x
 
+def solve_inlier_weighted_tls(A, W, T):
+    # A - BxNx3
+    # W - BxN, positive weights
+    # T - BxN, inlier weights
+    # Find solution to min x^T A^T diag(W) A x = min ||\sqrt{diag(W)} A x||^2, subject to ||x|| = 1
+    A_p = tf.expand_dims(A, axis=2) * tf.expand_dims(A, axis=3) # BxNx3x3
+    W_p = tf.expand_dims(tf.expand_dims(W, axis=2), axis=3) # BxNx1x1
+    T_p = tf.expand_dims(tf.expand_dims(T, axis=2), axis=3) # BxNx1x1
+    M = tf.reduce_sum(T_p * W_p * A_p, axis=1) # Bx3x3
+    x = custom_svd_v_column(M) # Bx3
+    return x

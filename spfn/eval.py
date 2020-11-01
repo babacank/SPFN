@@ -51,25 +51,25 @@ if __name__ == '__main__':
     with graph.as_default():
         pred_ph = {}
         pred_ph['W'] = tf.placeholder(shape=[None, None, n_max_instances], dtype=tf.float32)
-        pred_ph['normal_per_point'] = tf.placeholder(shape=[None, None, 3], dtype=tf.float32)
+        #pred_ph['normal_per_point'] = tf.placeholder(shape=[None, None, 3], dtype=tf.float32)
         pred_ph['type_per_point'] = tf.placeholder(shape=[None, None], dtype=tf.int32) # should be BxN in test
-        pred_ph['parameters'] = {}
-        for fitter_cls in fitter_factory.get_all_fitter_classes():
-            fitter_cls.insert_prediction_placeholders(pred_ph['parameters'], n_max_instances)
+        # pred_ph['parameters'] = {}
+        # for fitter_cls in fitter_factory.get_all_fitter_classes():
+        #     fitter_cls.insert_prediction_placeholders(pred_ph['parameters'], n_max_instances)
 
         gt_ph = evaluation.create_gt_dict(n_max_instances)
         P_in = tf.placeholder(shape=[None, None, 3], dtype=tf.float32)
         eval_result_node = evaluation.evaluate(pred_ph, gt_ph, is_eval=True, is_nn=conf.is_nn(), P_in=P_in)
 
     stats = {
-        'total_miou_loss': 0.0, 
-        'total_normal_loss': 0.0,
+        # 'total_miou_loss': 0.0,
+        # 'total_normal_loss': 0.0,
         'total_type_loss': 0.0,
         'total_residue_loss': 0.0, 
-        'total_parameter_loss': 0.0,
-        'per_instance_type_accuracy': 0.0,
-        'avg_residue_loss_without_gt': 0.0,
-        'parameter_loss_without_gt': 0.0,
+        # 'total_parameter_loss': 0.0,
+        # 'per_instance_type_accuracy': 0.0,
+        # 'avg_residue_loss_without_gt': 0.0,
+        # 'parameter_loss_without_gt': 0.0,
     }
     # Finish building evaluation graph. Start to run evaluations...
     with tf.Session(config=tf_conf, graph=graph) as sess:
@@ -89,16 +89,16 @@ if __name__ == '__main__':
                 feed_dict[pred_ph['parameters'][param]] = pred_result['parameters'][param]
 
             eval_result = sess.run(eval_result_node, feed_dict=feed_dict) # {loss_dict, matching_indices}
-            stats['total_miou_loss'] += np.sum(eval_result['loss_dict']['avg_miou_loss'])
-            stats['total_normal_loss'] += np.sum(eval_result['loss_dict']['normal_loss'])
+            # stats['total_miou_loss'] += np.sum(eval_result['loss_dict']['avg_miou_loss'])
+            # stats['total_normal_loss'] += np.sum(eval_result['loss_dict']['normal_loss'])
             stats['total_type_loss'] += np.sum(eval_result['loss_dict']['type_loss'])
             stats['total_residue_loss'] += np.sum(eval_result['loss_dict']['avg_residue_loss'])
             stats['total_parameter_loss'] += np.sum(eval_result['loss_dict']['avg_parameter_loss'])
-            stats['per_instance_type_accuracy'] += np.sum(eval_result['stats']['per_instance_type_accuracy'])
-            stats['avg_residue_loss_without_gt'] += np.sum(eval_result['stats']['avg_residue_loss_without_gt'])
-            stats['parameter_loss_without_gt'] += np.sum(eval_result['stats']['parameter_loss_without_gt'])
+            # stats['per_instance_type_accuracy'] += np.sum(eval_result['stats']['per_instance_type_accuracy'])
+            # stats['avg_residue_loss_without_gt'] += np.sum(eval_result['stats']['avg_residue_loss_without_gt'])
+            # stats['parameter_loss_without_gt'] += np.sum(eval_result['stats']['parameter_loss_without_gt'])
 
-            print('miou loss: {}'.format(eval_result['loss_dict']['avg_miou_loss']))
+            # print('miou loss: {}'.format(eval_result['loss_dict']['avg_miou_loss']))
             print('Stats: {}'.format(eval_result['stats']))
             batch_size = batch['P'].shape[0]
             basename_list = test_data.get_last_batch_basename_list()

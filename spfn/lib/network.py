@@ -51,22 +51,44 @@ class Network(object):
                 self.total_type_loss = tf.zeros(shape=[], dtype=tf.float32)
                 self.total_residue_loss = tf.zeros(shape=[], dtype=tf.float32)
                 self.total_parameter_loss = tf.zeros(shape=[], dtype=tf.float32)
-            else:
+
+            elif config.use_per_point():
                 self.pred_dict = architecture.get_per_point_model(
-                    scope='SPFN', 
-                    P=self.P, 
-                    n_max_instances=n_max_instances, 
-                    is_training=self.is_training, 
+                    scope='SPFN',
+                    P=self.P,
+                    n_max_instances=n_max_instances,
+                    is_training=self.is_training,
                     bn_decay=self.bn_decay,
                 )
 
                 eval_dict = evaluation.evaluate(
-                    self.pred_dict, 
-                    self.gt_dict, 
+                    self.pred_dict,
+                    self.gt_dict,
                     is_eval=False,
                     is_nn=True
                 )
                 self.collect_losses(eval_dict['loss_dict'])
+
+            else:
+                self.pred_dict, residue_loss_no_gt, outlier_loss_no_gt, loss_n_loss_no_gt = architecture.get_direct_plane_loss_model(
+                    scope='DPLM',
+                    P=self.P,
+                    n_max_instances=n_max_instances,
+                    #gt_dict=self.gt_dict,
+                    is_training=self.is_training,
+                    bn_decay=self.bn_decay
+                )
+                self.collect_unsupervised_losses(residue_loss_no_gt, outlier_loss_no_gt, loss_n_loss_no_gt)
+
+                #self.total_loss = 1 * tf.reduce_mean(residue_loss_no_gt)
+                # self.total_loss = 1 * tf.reduce_mean(outlier_loss_no_gt)
+                # self.total_miou_loss = tf.zeros(shape=[], dtype=tf.float32)
+                # self.total_normal_loss = tf.zeros(shape=[], dtype=tf.float32)
+                # self.total_type_loss = tf.zeros(shape=[], dtype=tf.float32)
+                # self.total_residue_loss = tf.zeros(shape=[], dtype=tf.float32)
+                # self.total_parameter_loss = tf.zeros(shape=[], dtype=tf.float32)
+
+
 
             learning_rate = self.get_learning_rate(
                 config.get_init_learning_rate(),
@@ -148,6 +170,85 @@ class Network(object):
         self.total_loss *= self.config.get_total_loss_multiplier()
         tf.summary.scalar('total_loss', self.total_loss)
 
+    def collect_unsupervised_losses(self, residue_loss_no_gt, outlier_loss_no_gt, loss_n_loss_no_gt):
+        self.total_loss = tf.zeros(shape=[], dtype=tf.float32)
+
+
+        self.loss_n_loss_per_data = loss_n_loss_no_gt
+        self.total_loss_n_loss = tf.reduce_sum(self.loss_n_loss_per_data)
+        loss_n_loss_multiplier = self.config.get_loss_n_loss_multiplier()
+        if loss_n_loss_multiplier > 0:
+            tf.summary.scalar('total_loss_n_loss', self.total_loss_n_loss)
+            self.total_loss += (loss_n_loss_multiplier * self.total_loss_n_loss)
+
+
+        self.type_loss_per_data = outlier_loss_no_gt
+        self.total_type_loss = tf.reduce_sum(self.type_loss_per_data)
+        type_loss_multiplier = self.config.get_type_loss_multiplier()
+        if type_loss_multiplier > 0:
+            tf.summary.scalar('total_type_loss', self.total_type_loss)
+            self.total_loss += (type_loss_multiplier * self.total_type_loss)
+
+
+
+        self.residue_loss_per_data = residue_loss_no_gt
+        #self.residue_loss_per_instance = loss_dict['residue_loss']
+        self.total_residue_loss = tf.reduce_mean(self.residue_loss_per_data)
+        residue_loss_multiplier = self.config.get_residue_loss_multiplier()
+        if residue_loss_multiplier > 0:
+            tf.summary.scalar('total_residue_loss', self.total_residue_loss)
+            self.total_loss += (residue_loss_multiplier * self.total_residue_loss)
+
+
+
+        self.total_loss *= self.config.get_total_loss_multiplier()
+        tf.summary.scalar('total_loss', self.total_loss)
+
+    def collect_plane_losses(self, loss_dict):
+            self.total_loss = tf.zeros(shape=[], dtype=tf.float32)
+            #
+            # self.normal_loss_per_data = loss_dict['normal_loss']
+            # self.total_normal_loss = tf.reduce_mean(self.normal_loss_per_data)
+            # normal_loss_multiplier = self.config.get_normal_loss_multiplier()
+            # if normal_loss_multiplier > 0:
+            #     tf.summary.scalar('total_normal_loss', self.total_normal_loss)
+            #     self.total_loss += normal_loss_multiplier * self.total_normal_loss
+            #
+            # self.type_loss_per_data = loss_dict['type_loss']
+            # self.total_type_loss = tf.reduce_mean(self.type_loss_per_data)
+            # type_loss_multiplier = self.config.get_type_loss_multiplier()
+            # if type_loss_multiplier > 0:
+            #     tf.summary.scalar('total_type_loss', self.total_type_loss)
+            #     self.total_loss += type_loss_multiplier * self.total_type_loss
+            #
+            # self.miou_loss_per_data = loss_dict['avg_miou_loss']
+            # self.miou_loss_per_instance = loss_dict['miou_loss']
+            # self.total_miou_loss = tf.reduce_mean(self.miou_loss_per_data)
+            # miou_loss_multiplier = self.config.get_miou_loss_multiplier()
+            # if miou_loss_multiplier > 0:
+            #     tf.summary.scalar('total_miou_loss', self.total_miou_loss)
+            #     self.total_loss += miou_loss_multiplier * self.total_miou_loss
+
+            #self.residue_loss_per_data = loss_dict['avg_residue_loss']
+            self.residue_loss_per_instance = loss_dict['residue_loss']
+            #self.total_residue_loss = tf.reduce_mean(self.residue_loss_per_data)
+            self.total_residue_loss = tf.reduce_mean(self.residue_loss_per_instance)
+            residue_loss_multiplier = self.config.get_residue_loss_multiplier()
+            if residue_loss_multiplier > 0:
+                tf.summary.scalar('total_residue_loss', self.total_residue_loss)
+                self.total_loss += residue_loss_multiplier * self.total_residue_loss
+
+            # self.parameter_loss_per_data = loss_dict['avg_parameter_loss']
+            # self.parameter_loss_per_instance = loss_dict['parameter_loss']
+            # self.total_parameter_loss = tf.reduce_mean(self.parameter_loss_per_data)
+            # parameter_loss_multiplier = self.config.get_parameter_loss_multiplier()
+            # if parameter_loss_multiplier > 0:
+            #     tf.summary.scalar('total_parameter_loss', self.total_parameter_loss)
+            #     self.total_loss += parameter_loss_multiplier * self.total_parameter_loss
+
+            self.total_loss *= self.config.get_total_loss_multiplier()
+            tf.summary.scalar('total_loss', self.total_loss)
+
     def train(self, sess, train_data, val_data, n_epochs, val_interval, snapshot_interval, model_dir, log_dir):
         assert n_epochs > 0
 
@@ -203,10 +304,11 @@ class Network(object):
     def format_loss_result(self, losses):
         msg = ''
         msg += 'Total Loss: {:6f}'.format(losses['total_loss'])
-        msg += ', MIoU Loss: {:6f}'.format(losses['total_miou_loss'])
-        msg += ', Normal Loss: {:6f}'.format(losses['total_normal_loss'])
+        #msg += ', MIoU Loss: {:6f}'.format(losses['total_miou_loss'])
+        #msg += ', Normal Loss: {:6f}'.format(losses['total_normal_loss'])
+        msg += ', Loss_n_Loss: {:6f}'.format(losses['total_loss_n_loss'])
         msg += ', Type Loss: {:6f}'.format(losses['total_type_loss'])
-        msg += ', Parameter Loss: {:6f}'.format(losses['total_parameter_loss'])
+        #msg += ', Parameter Loss: {:6f}'.format(losses['total_parameter_loss'])
         msg += ', Residue Loss: {:6f}'.format(losses['total_residue_loss'])
         return msg
 
@@ -226,36 +328,49 @@ class Network(object):
         print('Predicting and saving predictions to {}...'.format(save_dir))
         losses = {
             'total_loss': 0.0, 
-            'total_miou_loss': 0.0, 
-            'total_normal_loss': 0.0,
+            #'total_miou_loss': 0.0,
+            #'total_normal_loss': 0.0,
+            'total_loss_n_loss': 0.0,
             'total_type_loss': 0.0,
             'total_residue_loss': 0.0, 
-            'total_parameter_loss': 0.0
+            #'total_parameter_loss': 0.0
         }
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
+
+        f_out = open(os.path.join(save_dir, 'all_predictions.txt'), 'a')
+        f_out_para = open(os.path.join(save_dir, 'all_parameters.txt'), 'a')
+
+
         for batch in dset.create_iterator():
             feed_dict = self.create_feed_dict(batch, is_training=False)
             loss_dict = {
                 'total_loss': self.total_loss,
-                'total_miou_loss': self.total_miou_loss,
-                'total_normal_loss': self.total_normal_loss,
+                #'total_miou_loss': self.total_miou_loss,
+                #'total_normal_loss': self.total_normal_loss,
+                'total_loss_n_loss': self.total_loss_n_loss,
                 'total_type_loss': self.total_type_loss,
                 'total_residue_loss': self.total_residue_loss,
-                'total_parameter_loss': self.total_parameter_loss,
+                #'total_parameter_loss': self.total_parameter_loss,
             }
             pred_result, loss_result = sess.run([self.pred_dict, loss_dict], feed_dict=feed_dict)
 
             for key in losses.keys():
                 losses[key] += loss_result[key] * dset.last_step_size
-            prediction_io.save_batch_nn(
+            prediction_io.save_batch_nn_txt(
                 nn_name=self.config.get_nn_name(),
+                batch_dict=batch,
                 pred_result=pred_result, 
                 basename_list=dset.get_last_batch_basename_list(), 
                 save_dir=save_dir,
-                W_reduced=False,
+                f_out = f_out,
+                f_out_para=f_out_para,
+                W_reduced=True,
             )
             print('Finished {}/{}'.format(dset.get_last_batch_range()[1], dset.n_data), end='\r')
+        f_out.close()
+        f_out_para.close()
+
         losses.update((x, y / dset.n_data) for x, y in losses.items())
         msg = self.format_loss_result(losses)
         open(os.path.join(save_dir, 'test_loss.txt'), 'w').write(msg)
@@ -285,12 +400,12 @@ class Network(object):
             self.P : batch['P'], 
             self.is_training: is_training,
         }
-        evaluation.fill_gt_dict_with_batch_data(feed_dict, self.gt_dict, batch)
+        #evaluation.fill_gt_dict_with_batch_data(feed_dict, self.gt_dict, batch)
         return feed_dict
         
     def get_batch_norm_decay(self, global_step, batch_size, bn_decay_step):
-        BN_INIT_DECAY = 0.5
-        BN_DECAY_RATE = 0.5
+        BN_INIT_DECAY = 0.99
+        BN_DECAY_RATE = 0.99
         BN_DECAY_CLIP = 0.99
 
         bn_momentum = tf.train.exponential_decay(

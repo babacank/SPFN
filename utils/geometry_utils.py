@@ -3,8 +3,37 @@ from os.path import dirname
 sys.path.append(dirname(__file__))
 
 import tensorflow as tf
+from differentiable_tls import solve_inlier_weighted_tls
 from differentiable_tls import solve_weighted_tls
 from constants import SQRT_EPS, DIVISION_EPS, LS_L2_REGULARIZER
+import fitter_factory
+
+def compute_consistent_line_frame(normal):
+    # Input:  normal is Bx3
+    # Returns: x_axis, y_axis, both of dimension Bx3
+    batch_size = tf.shape(normal)[0]
+    candidate_axes = [[1, 0, 0], [0, 1, 0]] # Actually, 2 should be enough. This may still cause singularity TODO!!!
+    y_axes = []
+    for tmp_axis in candidate_axes:
+        tf_axis = tf.tile(tf.expand_dims(tf.constant(dtype=tf.float32, value=tmp_axis), axis=0), [batch_size, 1]) # Bx3
+        y_axes.append(tf.cross(normal, tf_axis))
+    y_axes = tf.stack(y_axes, axis=0) # QxBx3
+    y_axes_norm = tf.norm(y_axes, axis=2) # QxB
+    # choose the axis with largest norm
+    y_axes_chosen_idx = tf.argmax(y_axes_norm, axis=0) # B
+    # y_axes_chosen[b, :] = y_axes[y_axes_chosen_idx[b], b, :]
+    indices_0 = tf.tile(tf.expand_dims(y_axes_chosen_idx, axis=1), [1, 3]) # Bx3
+    indices_1 = tf.tile(tf.expand_dims(tf.range(batch_size), axis=1), [1, 3]) # Bx3
+    indices_2 = tf.tile(tf.expand_dims(tf.range(3), axis=0), [batch_size, 1]) # Bx3
+    indices = tf.stack([tf.cast(indices_0, tf.int32), indices_1, indices_2], axis=2) # Bx3x3
+    y_axes = tf.gather_nd(y_axes, indices=indices) # Bx3
+    if tf.VERSION == '1.4.1':
+        y_axes = tf.nn.l2_normalize(y_axes, dim=1)
+    else:
+        y_axes = tf.nn.l2_normalize(y_axes, axis=1)
+    x_axes = tf.cross(y_axes, normal) # Bx3
+
+    return x_axes, y_axes
 
 def compute_consistent_plane_frame(normal):
     # Input:  normal is Bx3
@@ -45,6 +74,46 @@ def weighted_plane_fitting(P, W):
     c = tf.reduce_sum(n * P_weighted_mean, axis=1)
     return n, c
 
+def weighted_plane_fitting_with_loss(P, W):
+    # P - BxNx3
+    # W - BxN
+    # Returns n, c, with n - Bx3, c - B
+    WP = P * tf.expand_dims(W, axis=2) # BxNx3
+    W_sum = tf.reduce_sum(W, axis=1) # B
+    P_weighted_mean = tf.reduce_sum(WP, axis=1) / tf.maximum(tf.expand_dims(W_sum, 1), DIVISION_EPS) # Bx3
+    A = P - tf.expand_dims(P_weighted_mean, axis=1) # BxNx3
+    n = solve_weighted_tls(A, W) # Bx3
+    c = tf.reduce_sum(n * P_weighted_mean, axis=1)
+    n_exp = tf.expand_dims(n, axis=1)
+    c_exp = tf.expand_dims(c, axis=1)
+    #loss = PlaneFitter.compute_residue_single(n_exp,c_exp,WP)
+    loss= tf.square(tf.reduce_sum(P * n_exp, axis=-1) - c_exp)
+    return n, c, loss
+
+def weighted_plane_fitting_with_loss_with_T(P, W, T):
+    # P - BxNx3
+    # W - BxN
+    # T - BxN
+    # Returns n, c, with n - Bx3, c - B
+
+    P = tf.slice(P,[0,0,0],[-1,-1,2])
+
+    TW = T * W
+    P_loss = P * tf.expand_dims(T, axis=2)
+    WP = P * tf.expand_dims(W, axis=2) # BxNx3
+
+    W_sum = tf.reduce_sum(W, axis=1) # B
+    P_weighted_mean = tf.reduce_sum(WP, axis=1) / tf.maximum(tf.expand_dims(W_sum, 1), DIVISION_EPS) # Bx3
+    A = P - tf.expand_dims(P_weighted_mean, axis=1) # BxNx3
+    n = solve_weighted_tls(A, TW) # Bx3
+    c = tf.reduce_sum(n * P_weighted_mean, axis=-1)
+    n_exp = tf.tile(tf.expand_dims(n, axis=1),[1,8192,1])
+    c_exp = tf.tile(tf.expand_dims(c, axis=1),[1,8192])
+    #loss = PlaneFitter.compute_residue_single(n_exp,c_exp,WP)
+    #loss= tf.square(tf.reduce_sum(WP * n_exp, axis=-1) - c_exp)
+    loss = tf.square(tf.reduce_sum(WP * n_exp, axis=-1) - c_exp)
+    #loss = tf.square(tf.reduce_sum(P_loss * n, axis=-1) - c)
+    return n, c, loss
 '''
     L = \sum_{i=1}^m w_i [(p_i - x)^2 - r^2]^2
     dL/dr = 0 => r^2 = \frac{1}{\sum_i w_i} \sum_j w_j (p_j - x)^2
@@ -54,6 +123,86 @@ def weighted_plane_fitting(P, W):
     b_i = \sqrt{w_i}[\frac{\sum_j w_j p_j^2}{\sum_j w_j} - p_i^2]
     So \argmin_x ||Ax-b||^2 gives the best center of the sphere
 '''
+
+def weighted_consistent_plane_fitting_with_loss_with_T(P, W, T):
+    # P - BxNx3
+    # W - BxN
+    # T - BxN
+    # Returns n, c, with n - Bx3, c - B
+
+    P = tf.slice(P,[0,0,0],[-1,-1,2])
+
+    TW = T * W
+    WP_loss = P * tf.expand_dims(TW, axis=2)
+    WP = P * tf.expand_dims(TW, axis=2) # BxNx3
+    #WP_onehot = P * tf.expand_dims(tf.one_hot(tf.argmax(W, axis=1), depth=8192, dtype=tf.float32), axis=2)
+    WP_onehot = tf.transpose(tf.one_hot(tf.argmax(WP, axis=1), depth=8192, dtype=tf.float32),[0,2,1])
+    #W_sum = tf.reduce_sum(W, axis=1) # B
+    W_sum = tf.reduce_sum(TW, axis=1) # B
+    P_weighted_mean = tf.reduce_sum(WP, axis=1) / tf.maximum(tf.expand_dims(W_sum, 1), DIVISION_EPS) # Bx3
+    A = P - tf.expand_dims(P_weighted_mean, axis=1) # BxNx3
+    n = solve_inlier_weighted_tls(A, W, T) # Bx3
+    #c = tf.reduce_sum(n * P_weighted_mean, axis=1)
+    c = tf.reduce_sum(n * P_weighted_mean, axis=1)
+    c_dub = tf.tile(tf.expand_dims(c, axis=1),[1,2])
+    n_exp = tf.tile(tf.expand_dims(n, axis=1),[1,8192,1])
+    c_exp = tf.tile(tf.expand_dims(c, axis=1),[1,8192])
+
+    loss = compute_residual_loss(WP,n,c)
+    #c_exp = tf.expand_dims(c, axis=1)
+    #for fitter_cls in fitter_factory.get_all_fitter_classes():
+        #loss = fitter_cls.compute_residue_single(n_exp,c_exp ,P_weighted_mean)
+        #Loss = fitter_cls.compute_residue_loss_no_gt (n_exp,c_exp,WP_loss)
+
+    #loss = fitter_cls.compute_residue_single(n_exp, c_exp, P_weighted_mean)
+    #loss = plane_fitter.compute_residue_single(n_exp,c_exp,WP)
+    #loss= tf.square((P_weighted_mean * n) - c_exp)
+    #loss= tf.square(tf.reduce_sum(WP * n_exp, axis=-1)- c_exp)
+
+    #loss = tf.square(tf.reduce_sum(WP_onehot * n_exp, axis=-1) - 100 * c_exp)
+    #vert = tf.reduce_sum((n,0), axis=1)
+    #horz = tf.reduce_sum((n,0), axis=1)
+    #mean_n, variance_n = tf.nn.moments(n,axes=[1])
+    #loss_n = tf.subtract(tf.ones_like(variance_n), variance_n)
+    #loss_n = red_var(n, axis=1)
+    #loss_n = tf.subtract(tf.ones_like(n), red_var(n, axis=1))
+    vert = tf.constant([0,1], dtype=tf.float32)
+    vert_r = tf.expand_dims(tf.expand_dims(vert,0),0)
+    loss_n = 1.0 - tf.abs(tf.reduce_sum(n * vert_r, axis=2))
+    #loss = tf.square(tf.reduce_sum(P_loss * n, axis=-1) - c)
+    return n, c, loss_n, WP
+
+def compute_residual_loss(P,n,c):
+    loss=0
+    # loss = tf.matmul(P,n) - c
+    return loss
+
+def red_var(n,axis):
+    means = tf.reduce_mean(n, axis=axis, keepdims=True)
+    squared_deviations = tf.square(means)
+    return tf.reduce_mean(squared_deviations)
+
+
+def weighted_plane_fitting_with_loss_with_T_original(P, W, T):
+    # P - BxNx3
+    # W - BxN
+    # T - BxN
+    # Returns n, c, with n - Bx3, c - B
+
+    WT = W * T
+    WP = P * tf.expand_dims(WT, axis=2) # BxNx3
+    W_sum = tf.reduce_sum(WT, axis=1) # B
+    P_weighted_mean = tf.reduce_sum(WP, axis=1) / tf.maximum(tf.expand_dims(W_sum, 1), DIVISION_EPS) # Bx3
+    A = P - tf.expand_dims(P_weighted_mean, axis=1) # BxNx3
+    n = solve_weighted_tls(A, WT) # Bx3
+    c = tf.reduce_sum(n * P_weighted_mean, axis=1)
+    n_exp = tf.expand_dims(n, axis=1)
+    c_exp = tf.expand_dims(c, axis=1)
+    #loss = plane_fitter.compute_residue_single(n_exp,c_exp,WP)
+    #loss= tf.square(tf.reduce_sum(P * n_exp, axis=-1) - c_exp)
+    loss = tf.square(tf.reduce_sum(WP * n_exp, axis=-1) - c_exp)
+    return n, c, loss,
+
 def weighted_sphere_fitting(P, W):
     # P - BxNxD
     # W - BxN

@@ -2,18 +2,18 @@ CUDA_visible_GPUs:
     - "0"
 
 list_of_primitives:
-    - 'sphere'
+    #- 'sphere'
     - 'plane'
-    - 'cylinder'
-    - 'cone'
+    #- 'cylinder'
+    #- 'cone'
 
 is_nn: true
 
 n_max_instances: 24
 batch_size: 16
 
-prediction_dir: "results/val_pred/stepXXXXX"
-test_data_file: "../traceparts_data/test_models.csv"
+prediction_dir: "data/results19/val_pred"
+test_data_file: "../data/stanford_merged/indoor3d_ins_seg_hdf5files9/filelist.csv"
 test_first_n: -1
 test_data_noisy: true
-bundle_dir: "results/eval_bundle"
+bundle_dir: "data/results19/eval_bundle"

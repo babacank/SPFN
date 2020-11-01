@@ -4,9 +4,11 @@ sys.path.append(BASE_DIR)
 import fitter_factory
 
 import numpy as np
+import tensorflow as tf
 import pandas
 import h5py
 import pickle
+import csv
 
 class PredictionLoader:
     def __init__(self, n_max_instances, pred_dir):
@@ -81,6 +83,45 @@ def save_batch_nn(nn_name, pred_result, basename_list, save_dir, W_reduced=True)
         g = f.create_group('parameters')
         for key in pred_result['parameters']:
             g.create_dataset(key, data=pred_result['parameters'][key][b])
+
+def save_batch_nn_txt(nn_name, batch_dict, pred_result, basename_list, save_dir, f_out,f_out_para, W_reduced=True):
+    batch_size = pred_result['W'].shape[0]
+    batch_P = batch_dict['P']
+    assert batch_size == len(basename_list)
+    type_per_point = np.max(pred_result['type_per_point'], axis=2) # BxN
+    instance_per_point = pred_result['W'] # BxNxK
+    if W_reduced:
+        instance_per_point = np.argmax(instance_per_point, axis=2) # BxN
+    instance_per_point_expnd = tf.expand_dims(instance_per_point, 1)
+    type_per_point_expnd = tf.expand_dims(type_per_point, 1)
+    #data_out = instance_per_point
+    #data_out = np.dstack((batch_P, instance_per_point_expnd, type_per_point_expnd,  pred_result['normal_per_point']))
+    #data_out = np.dstack((instance_per_point_expnd, type_per_point_expnd))
+    #instance_per_point, type_per_point,
+    #f_out.write(data_out)
+    #f_out = open(os.path.join(save_dir, basename_list + '.txt'), 'w')
+    for b in range(batch_size):
+        #f_out = open(os.path.join(save_dir, basename_list[b] + '.txt'), 'w')
+        #f_out.write('v %d %d \n' % (instance_per_point[b]))
+        #csv.writer(f_out, delimiter=' ').writerows(instance_per_point[b])
+        data_out  = np.column_stack((batch_P[b], instance_per_point[b], type_per_point[b], pred_result['normal_per_point'][b]))
+        np.savetxt(f_out, data_out, fmt='%f', delimiter='\t', newline='\n')
+        para_out  = np.column_stack((pred_result['parameters']['plane_n'][b],pred_result['parameters']['plane_c'][b]))
+        np.savetxt(f_out_para, para_out, fmt='%f', delimiter='\t', newline='\n')
+
+    #f_out.write('v %f %f %f %d %d %d\n' % (instance_per_point[b], pred_result['normal_per_point'][b]))
+
+        # f = h5py.File(os.path.join(save_dir, basename_list[b] + '.h5'), 'w')
+        # f.attrs['method_name'] = nn_name
+        # f.attrs['basename'] = basename_list[b]
+        # f.attrs['name_to_id_dict'] = np.void(pickle.dumps(fitter_factory.primitive_name_to_id_dict))
+        # f.create_dataset('normal_per_point', data=pred_result['normal_per_point'][b])
+        # f.create_dataset('type_per_point', data=type_per_point[b])
+        # f.create_dataset('instance_per_point', data=instance_per_point[b])
+        # g = f.create_group('parameters')
+        # for key in pred_result['parameters']:
+        #     g.create_dataset(key, data=pred_result['parameters'][key][b])
+
 
 def save_single_nn(nn_name, pred_result, pred_h5_file, W_reduced=True):
     batch_size = pred_result['W'].shape[0]
