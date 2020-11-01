@@ -144,7 +144,7 @@ def weighted_consistent_plane_fitting_with_loss_with_T(P, W, T):
     n = solve_inlier_weighted_tls(A, W, T) # Bx3
     #c = tf.reduce_sum(n * P_weighted_mean, axis=1)
     c = tf.reduce_sum(n * P_weighted_mean, axis=1)
-    c_dub = tf.tile(tf.expand_dims(c, axis=1),[1,2])
+    c_dub = tf.tile(tf.expand_dims(c, axis=1),[1,2])1
     n_exp = tf.tile(tf.expand_dims(n, axis=1),[1,8192,1])
     c_exp = tf.tile(tf.expand_dims(c, axis=1),[1,8192])
 
